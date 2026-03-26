@@ -1,0 +1,12 @@
+{
+  "name": "kf1688-worker-v2",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "src/worker.js",
+  "scripts": {
+    "start": "node src/worker.js",
+    "once": "node src/worker.js --once",
+    "check": "node --check src/worker.js && node --check src/browser-adapter.js && node --check src/message-parser.js && node --check src/notify.js"
+  }
+}
