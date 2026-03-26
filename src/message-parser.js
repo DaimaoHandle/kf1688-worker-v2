@@ -330,24 +330,57 @@ function isLikelyContextOnlyCustomerMessage(msg) {
   return false;
 }
 
+function isPromptLikeMessage(text) {
+  const value = normalize(text || '');
+  if (!value) return false;
+  return /^(\?+|？+|在吗|为什么不回信息呢|为什么不回|怎么不回|咋不回|怎么不回复|怎么不说话|还在吗|有人吗)$/.test(value);
+}
+
+function isBusinessPrimaryMessage(msg) {
+  if (!msg || !msg.isCustomer || msg.isSystem) return false;
+  const text = normalize(msg.text || '');
+  if (!text) return false;
+  if (isPromptLikeMessage(text)) return false;
+  if (msg.needsEscalation) return true;
+  if (/价格|多少钱|怎么卖|什么价|报价|500个|100个|起订|批发|能做|可以做/.test(text)) return true;
+  if (msg.hasQuestion && !isPromptLikeMessage(text)) return true;
+  if (msg.shouldUseAi) return true;
+  return false;
+}
+
 function latestOutstandingCustomerMessage(effectiveMessages) {
+  let trailingSeller = false;
   for (let i = effectiveMessages.length - 1; i >= 0; i--) {
     const msg = effectiveMessages[i];
-    if (msg.isSeller) return null;
+    if (msg.isSeller) {
+      trailingSeller = true;
+      break;
+    }
     if (!msg.isCustomer || msg.isSystem) continue;
     if (isLikelyContextOnlyCustomerMessage(msg)) continue;
-    if (msg.needsEscalation) return msg;
-    if (msg.hasQuestion) return msg;
-    if (msg.shouldUseAi) return msg;
+  }
+  if (trailingSeller) return null;
+
+  const customerRun = [];
+  for (let i = effectiveMessages.length - 1; i >= 0; i--) {
+    const msg = effectiveMessages[i];
+    if (msg.isSeller) break;
+    if (!msg.isCustomer || msg.isSystem) continue;
+    customerRun.unshift(msg);
+  }
+
+  if (!customerRun.length) return null;
+
+  const primary = customerRun.find(isBusinessPrimaryMessage);
+  if (primary) return primary;
+
+  for (let i = customerRun.length - 1; i >= 0; i--) {
+    const msg = customerRun[i];
+    if (isLikelyContextOnlyCustomerMessage(msg)) continue;
     return msg;
   }
 
-  for (let i = effectiveMessages.length - 1; i >= 0; i--) {
-    const msg = effectiveMessages[i];
-    if (msg.isSeller) return null;
-    if (msg.isCustomer && !msg.isSystem) return msg;
-  }
-  return null;
+  return customerRun[customerRun.length - 1] || null;
 }
 
 function findOutstandingCustomerMessage(effectiveMessages) {
