@@ -2,6 +2,7 @@ const SELLER_NAME = (process.env.KF1688_SELLER_NAME || '极有光世界百货').
 const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}$/;
 const SPEAKER_RE = /^[\u4e00-\u9fa5A-Za-z0-9_·-]{2,40}(工厂店|百货)$/;
 const GENERIC_SPEAKER_RE = /^[A-Za-z0-9_·-]{4,40}$/;
+const CHINESE_SPEAKER_RE = /^[\u4e00-\u9fa5A-Za-z0-9_·-]{2,40}$/;
 
 function normalize(s) {
   return (s || '').replace(/\s+/g, ' ').trim();
@@ -135,6 +136,9 @@ function isSpeakerToken(token) {
   if (value === SELLER_NAME) return true;
   if (SPEAKER_RE.test(value)) return true;
   if (GENERIC_SPEAKER_RE.test(value) && !/^\d+$/.test(value) && !/^(https?|￥|到手价)$/.test(value)) {
+    return true;
+  }
+  if (CHINESE_SPEAKER_RE.test(value) && !/^\d+$/.test(value) && !/^(https?|￥|到手价|暂无更多消息|已读|未读|发送|档案|商品|我的订单)$/.test(value)) {
     return true;
   }
   return false;
@@ -317,12 +321,31 @@ function extractEffectiveMessages(tail, limit = 6) {
   return enrichProductContext(effective);
 }
 
+function isLikelyContextOnlyCustomerMessage(msg) {
+  if (!msg || !msg.isCustomer || msg.isSystem) return false;
+  if (msg.hasQuestion || msg.needsEscalation || msg.shouldUseAi || msg.needsProductContext) return false;
+  const text = normalize(msg.text || '');
+  if (!text) return true;
+  if (/￥|https?:\/\/|商品|规格|尺码|颜色|材质|下单|到手价/.test(text)) return true;
+  return false;
+}
+
 function latestOutstandingCustomerMessage(effectiveMessages) {
   for (let i = effectiveMessages.length - 1; i >= 0; i--) {
     const msg = effectiveMessages[i];
     if (msg.isSeller) return null;
+    if (!msg.isCustomer || msg.isSystem) continue;
+    if (isLikelyContextOnlyCustomerMessage(msg)) continue;
+    if (msg.needsEscalation) return msg;
+    if (msg.hasQuestion) return msg;
+    if (msg.shouldUseAi) return msg;
+    return msg;
+  }
+
+  for (let i = effectiveMessages.length - 1; i >= 0; i--) {
+    const msg = effectiveMessages[i];
+    if (msg.isSeller) return null;
     if (msg.isCustomer && !msg.isSystem) return msg;
-    if (msg.isCustomer && msg.needsEscalation) return msg;
   }
   return null;
 }
