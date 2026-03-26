@@ -51,11 +51,12 @@ function runMainAgentPrompt(message) {
 
 function formatEscalationNotice(notice) {
   const lines = [
-    '【1688人工介入】',
+    `【待处理】${notice.replyCode || 'RXXXX'}`,
     `会话：${notice.conversation || '未知会话'}`,
     `客户消息：${notice.customerText || '（空）'}`
   ];
   if (notice.reason) lines.push(`原因：${notice.reason}`);
+  lines.push(`回复格式：回复 ${notice.replyCode || 'RXXXX'}：你的内容`);
   return lines.join('\n');
 }
 

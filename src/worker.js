@@ -147,12 +147,14 @@ function loadRuntimeState() {
     if (!state.seen) state.seen = {};
     if (!state.inflight) state.inflight = {};
     if (!state.completed) state.completed = {};
+    if (!state.pendingReplies) state.pendingReplies = {};
     return state;
   } catch (_) {
     return {
       seen: {},
       inflight: {},
       completed: {},
+      pendingReplies: {},
       lastLoopAt: null,
       lastErrorAt: null,
       lastError: null,
@@ -185,7 +187,11 @@ function rememberAction(state, fingerprint, action, extra = {}) {
   };
 }
 
-function buildEscalationNotice(latest, state, conversation) {
+function generateReplyCode() {
+  return `R${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+}
+
+function buildEscalationNotice(latest, state, conversation, replyCode = '') {
   const reasonMap = {
     keyword: '命中人工介入关键词',
     'product-card-question': '商品卡片/找款类问法',
@@ -193,6 +199,7 @@ function buildEscalationNotice(latest, state, conversation) {
   };
   return {
     type: 'escalation',
+    replyCode,
     conversation: conversation || (state.unread && state.unread[0] && state.unread[0].name) || '当前会话',
     customerText: latest.text,
     reason: reasonMap[latest.escalationReason] || '命中人工介入规则'
@@ -580,9 +587,17 @@ function processOnce(runtimeState) {
         conversation: parsed.conversationName,
         customerText: latest.text
       });
-      const notice = buildEscalationNotice(latest, state, parsed.conversationName);
+      const replyCode = generateReplyCode();
+      const notice = buildEscalationNotice(latest, state, parsed.conversationName, replyCode);
+      runtimeState.pendingReplies[replyCode] = {
+        at: Date.now(),
+        conversation: parsed.conversationName,
+        customerText: latest.text,
+        fingerprint,
+        status: 'pending'
+      };
       const notifyResult = sendFeishuText(formatEscalationNotice(notice));
-      rememberAction(runtimeState, fingerprint, 'replied-hold', { notice, reply });
+      rememberAction(runtimeState, fingerprint, 'replied-hold', { notice, reply, replyCode });
       result.action = 'replied-hold';
       result.reply = reply;
       result.replyResult = sendReplyResult;
@@ -906,7 +921,56 @@ async function loop() {
   }
 }
 
+function sendManualReplyByCode(replyCode, text) {
+  const runtimeState = loadRuntimeState();
+  const pending = runtimeState.pendingReplies && runtimeState.pendingReplies[replyCode];
+  if (!pending) {
+    throw new Error(`pending reply code not found: ${replyCode}`);
+  }
+  const tab = ensureImTab();
+  const opened = openConversationAndRead(pending.conversation, 1200);
+  if (!opened || !opened.ok) {
+    throw new Error(`failed to open conversation: ${pending.conversation}`);
+  }
+  const sendReplyResult = sendTextWithRecovery(text);
+  if (!(sendReplyResult && sendReplyResult.ok)) {
+    throw new Error(`failed to send reply for ${replyCode}`);
+  }
+  pending.status = 'sent';
+  pending.sentAt = Date.now();
+  pending.sentText = text;
+  runtimeState.completed[pending.conversation] = {
+    fingerprint: pending.fingerprint,
+    at: Date.now(),
+    action: 'replied-manual-feishu'
+  };
+  saveRuntimeState(runtimeState);
+  return {
+    ok: true,
+    replyCode,
+    conversation: pending.conversation,
+    text,
+    tab,
+    sendReplyResult
+  };
+}
+
+function argValue(flag) {
+  const idx = process.argv.indexOf(flag);
+  if (idx === -1) return '';
+  return process.argv[idx + 1] || '';
+}
+
 function main() {
+  const sendCode = argValue('--send-code');
+  if (sendCode) {
+    const text = argValue('--text');
+    if (!text) throw new Error('--text is required when using --send-code');
+    const result = sendManualReplyByCode(sendCode, text);
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
   if (process.argv.includes('--once')) {
     const runtimeState = loadRuntimeState();
     gcSeen(runtimeState.seen);
