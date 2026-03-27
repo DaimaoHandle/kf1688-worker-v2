@@ -597,6 +597,7 @@ function processOnce(runtimeState) {
         status: 'pending'
       };
       const notifyResult = sendFeishuText(formatEscalationNotice(notice));
+      saveRuntimeState(runtimeState);
       rememberAction(runtimeState, fingerprint, 'replied-hold', { notice, reply, replyCode });
       result.action = 'replied-hold';
       result.reply = reply;
@@ -708,6 +709,7 @@ function processOnce(runtimeState) {
           status: 'pending'
         };
         const notifyResult = sendFeishuText(formatEscalationNotice(notice));
+        saveRuntimeState(runtimeState);
         rememberAction(runtimeState, fingerprint, 'ai-missing-url-escalated', { aiTodo, notice, reply, replyCode });
         runtimeState.completed[conversationKey] = { fingerprint, at: Date.now(), action: 'ai-missing-url-escalated' };
         delete runtimeState.inflight[conversationKey];
@@ -887,6 +889,7 @@ function processOnce(runtimeState) {
       reason: '未命中自动回复规则，转人工处理'
     };
     const notifyResult = sendFeishuText(formatEscalationNotice(notice));
+    saveRuntimeState(runtimeState);
     rememberAction(runtimeState, fingerprint, 'fallback-escalated', { reply, notice });
     runtimeState.completed[conversationKey] = { fingerprint, at: Date.now(), action: 'fallback-escalated' };
     delete runtimeState.inflight[conversationKey];
