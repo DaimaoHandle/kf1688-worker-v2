@@ -883,14 +883,24 @@ function processOnce(runtimeState) {
       conversation: parsed.conversationName,
       customerText: latest.text
     });
+    const replyCode = generateReplyCode();
+    runtimeState.pendingReplies[replyCode] = {
+      at: Date.now(),
+      conversation: parsed.conversationName,
+      customerText: latest.text,
+      fingerprint,
+      status: 'pending'
+    };
     const notice = {
+      type: 'escalation',
+      replyCode,
       conversation: parsed.conversationName,
       customerText: latest.text,
       reason: '未命中自动回复规则，转人工处理'
     };
     const notifyResult = sendFeishuText(formatEscalationNotice(notice));
     saveRuntimeState(runtimeState);
-    rememberAction(runtimeState, fingerprint, 'fallback-escalated', { reply, notice });
+    rememberAction(runtimeState, fingerprint, 'fallback-escalated', { reply, notice, replyCode });
     runtimeState.completed[conversationKey] = { fingerprint, at: Date.now(), action: 'fallback-escalated' };
     delete runtimeState.inflight[conversationKey];
     result.action = 'fallback-escalated';
