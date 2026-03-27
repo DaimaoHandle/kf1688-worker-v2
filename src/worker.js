@@ -658,19 +658,20 @@ function processOnce(runtimeState) {
       return result;
     }
 
-    if (latest.hasProductContext && latest.shouldUseAi) {
-      const productContext = getRecentProductCardContext();
+    if (latest.shouldUseAi) {
+      const productContext = latest.hasProductContext ? getRecentProductCardContext() : null;
       result.productContext = productContext;
       log('message.product-context-dom', {
         conversation: parsed.conversationName,
         fingerprint,
-        productContext
+        productContext,
+        hasProductContext: latest.hasProductContext
       });
 
       const ancestry = (productContext && productContext.ancestry) || [];
       const clickableProductNode = ancestry.find(node => node && (node.dataset?.spmAnchorId || node.onclickType === 'function' || node.onclickType === 'object'));
       let clickedProduct = null;
-      if (clickableProductNode && !productContext.productUrl) {
+      if (latest.hasProductContext && clickableProductNode && !productContext.productUrl) {
         clickedProduct = clickRecentProductCardAndCaptureUrl();
         result.clickedProduct = clickedProduct;
         log('message.product-card-clicked', {
@@ -685,14 +686,45 @@ function processOnce(runtimeState) {
         productUrl: (clickedProduct && clickedProduct.productUrl) || (productContext && productContext.productUrl) || ''
       });
       if (!aiTodo.productUrl) {
-        rememberAction(runtimeState, fingerprint, 'ai-product-analysis-missing-url', { aiTodo });
-        result.action = 'ai-product-analysis-missing-url';
+        const reply = holdingReply();
+        const sendReplyResult = sendTextWithRecovery(reply);
+        assertSendResult(sendReplyResult, 'send-ai-missing-url-holding-reply', {
+          conversation: parsed.conversationName,
+          customerText: latest.text
+        });
+        const replyCode = generateReplyCode();
+        const notice = {
+          type: 'escalation',
+          replyCode,
+          conversation: parsed.conversationName,
+          customerText: latest.text,
+          reason: latest.hasProductContext ? '商品分析缺少有效商品链接，转人工处理' : '客户在追问商品信息，但当前未识别到可用商品上下文，转人工处理'
+        };
+        runtimeState.pendingReplies[replyCode] = {
+          at: Date.now(),
+          conversation: parsed.conversationName,
+          customerText: latest.text,
+          fingerprint,
+          status: 'pending'
+        };
+        const notifyResult = sendFeishuText(formatEscalationNotice(notice));
+        rememberAction(runtimeState, fingerprint, 'ai-missing-url-escalated', { aiTodo, notice, reply, replyCode });
+        runtimeState.completed[conversationKey] = { fingerprint, at: Date.now(), action: 'ai-missing-url-escalated' };
+        delete runtimeState.inflight[conversationKey];
+        result.action = 'ai-missing-url-escalated';
         result.aiTodo = aiTodo;
-        log('message.ai-missing-url', {
+        result.reply = reply;
+        result.replyResult = sendReplyResult;
+        result.notice = notice;
+        result.notifyResult = notifyResult;
+        log('message.ai-missing-url-escalated', {
           conversation: parsed.conversationName,
           fingerprint,
           customerText: latest.text,
-          cardIntent: latest.cardIntent
+          cardIntent: latest.cardIntent,
+          hasProductContext: latest.hasProductContext,
+          sendReplyOk: true,
+          notifyOk: true
         });
         return result;
       }
