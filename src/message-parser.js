@@ -349,23 +349,20 @@ function isBusinessPrimaryMessage(msg) {
 }
 
 function latestOutstandingCustomerMessage(effectiveMessages) {
-  let trailingSeller = false;
-  for (let i = effectiveMessages.length - 1; i >= 0; i--) {
-    const msg = effectiveMessages[i];
-    if (msg.isSeller) {
-      trailingSeller = true;
-      break;
-    }
-    if (!msg.isCustomer || msg.isSystem) continue;
-    if (isLikelyContextOnlyCustomerMessage(msg)) continue;
-  }
-  if (trailingSeller) return null;
-
   const customerRun = [];
+  let seenCustomerAfterSeller = false;
+
   for (let i = effectiveMessages.length - 1; i >= 0; i--) {
     const msg = effectiveMessages[i];
-    if (msg.isSeller) break;
+
+    if (msg.isSeller) {
+      if (seenCustomerAfterSeller) break;
+      continue;
+    }
+
     if (!msg.isCustomer || msg.isSystem) continue;
+
+    seenCustomerAfterSeller = true;
     customerRun.unshift(msg);
   }
 
