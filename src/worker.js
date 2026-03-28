@@ -56,7 +56,7 @@ function simpleReply(text, latest = null) {
   if (/多久发货|什么时候发货|今天还能发货吗|今天可以发货吗|今天能发吗|今天发得出吗|当天能发吗|今天能安排发货吗|现在下单今天能发吗/.test(text)) {
     return '亲，正常下单后一般是48小时内发货哦，如果您这边比较着急，我也可以帮您催一下呢。';
   }
-  if (/你好|hello|哈喽|在吗|^在$|^在不$|^在嘛$|^有人吗$|^亲$|^亲在吗$/.test(text)) {
+  if (/^你好[呀啊哈]?$|^hello$|^哈喽$|^在吗$|^在$|^在不$|^在嘛$|^有人吗$|^亲$|^亲在吗$/i.test(text)) {
     return '在的亲，有什么可以帮您的';
   }
   return '';
@@ -368,7 +368,9 @@ function processOnce(runtimeState) {
   const initialParsed = parseLatestFromState(state, (state.activeConversation && state.activeConversation.name) || '');
   result.outstanding = initialParsed.outstanding;
 
-  if (initialParsed.outstanding && initialParsed.outstanding.hasOutstanding) {
+  const shouldStayOnCurrent = initialParsed.outstanding && initialParsed.outstanding.hasOutstanding && !(state.unread || []).length;
+
+  if (shouldStayOnCurrent) {
     result.action = 'stay-current-outstanding';
     log('conversation.keep-current', {
       activeConversation: state.activeConversation && state.activeConversation.name,

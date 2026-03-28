@@ -72,10 +72,10 @@ const PRODUCT_ATTRIBUTE_PATTERNS = [
 ];
 
 const GREETING_PATTERNS = [
-  /你好/,
-  /hello/i,
-  /哈喽/,
-  /在吗/,
+  /^你好[呀啊哈]?$/,
+  /^hello$/i,
+  /^哈喽$/,
+  /^在吗$/,
   /^在$/,
   /^在不$/,
   /^在嘛$/,
@@ -360,20 +360,20 @@ function isBusinessPrimaryMessage(msg) {
 }
 
 function latestOutstandingCustomerMessage(effectiveMessages) {
-  const customerRun = [];
-  let seenCustomerAfterSeller = false;
+  const last = effectiveMessages[effectiveMessages.length - 1];
+  if (!last) return null;
 
+  if (last.isSeller) {
+    return null;
+  }
+
+  const customerRun = [];
   for (let i = effectiveMessages.length - 1; i >= 0; i--) {
     const msg = effectiveMessages[i];
 
-    if (msg.isSeller) {
-      if (seenCustomerAfterSeller) break;
-      continue;
-    }
-
+    if (msg.isSeller) break;
     if (!msg.isCustomer || msg.isSystem) continue;
 
-    seenCustomerAfterSeller = true;
     customerRun.unshift(msg);
   }
 
