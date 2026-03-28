@@ -71,7 +71,18 @@ const PRODUCT_ATTRIBUTE_PATTERNS = [
   /颜色/, /什么颜色/, /几个颜色/, /色号/
 ];
 
-const GREETING_PATTERNS = [/你好/, /hello/i, /哈喽/, /在吗/];
+const GREETING_PATTERNS = [
+  /你好/,
+  /hello/i,
+  /哈喽/,
+  /在吗/,
+  /^在$/,
+  /^在不$/,
+  /^在嘛$/,
+  /^有人吗$/,
+  /^亲$/,
+  /^亲在吗$/
+];
 
 function detectProductCard(text) {
   const hitCount = PRODUCT_CARD_PATTERNS.filter(re => re.test(text)).length;
