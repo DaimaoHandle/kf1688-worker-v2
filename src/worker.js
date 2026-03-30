@@ -141,6 +141,36 @@ function isClosingLikeMessage(text) {
   ].some(re => re.test(cleaned));
 }
 
+function backfillDedupeFromPendingReplies(state) {
+  let changed = false;
+  for (const [replyCode, pending] of Object.entries(state.pendingReplies || {})) {
+    if (!pending || !pending.fingerprint) continue;
+    const conversationKey = pending.conversation || '__current__';
+    if (!state.seen[pending.fingerprint]) {
+      state.seen[pending.fingerprint] = {
+        at: pending.at || Date.now(),
+        action: 'pending-reply-backfilled',
+        replyCode,
+        customerText: pending.customerText || '',
+        conversation: pending.conversation || ''
+      };
+      changed = true;
+    }
+    if (pending.status === 'pending') {
+      const existingCompleted = state.completed[conversationKey];
+      if (!existingCompleted || existingCompleted.fingerprint === pending.fingerprint) {
+        state.completed[conversationKey] = {
+          fingerprint: pending.fingerprint,
+          at: pending.at || Date.now(),
+          action: 'pending-reply-backfilled'
+        };
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
 function loadRuntimeState() {
   try {
     const state = JSON.parse(fs.readFileSync(STATE_PATH, 'utf8'));
@@ -148,6 +178,9 @@ function loadRuntimeState() {
     if (!state.inflight) state.inflight = {};
     if (!state.completed) state.completed = {};
     if (!state.pendingReplies) state.pendingReplies = {};
+    if (backfillDedupeFromPendingReplies(state)) {
+      saveRuntimeState(state);
+    }
     return state;
   } catch (_) {
     return {
@@ -184,6 +217,55 @@ function rememberAction(state, fingerprint, action, extra = {}) {
     at: Date.now(),
     action,
     ...extra
+  };
+}
+
+function markCompleted(state, conversationKey, fingerprint, action, extra = {}) {
+  if (fingerprint) {
+    rememberAction(state, fingerprint, action, extra);
+  }
+  state.completed[conversationKey || '__current__'] = {
+    fingerprint,
+    at: Date.now(),
+    action
+  };
+}
+
+function findPendingReplyByFingerprint(state, fingerprint, conversationKey = '') {
+  for (const [replyCode, pending] of Object.entries((state && state.pendingReplies) || {})) {
+    if (!pending || pending.status !== 'pending') continue;
+    if (pending.fingerprint !== fingerprint) continue;
+    const pendingConversationKey = pending.conversation || '__current__';
+    if ((conversationKey || '__current__') !== pendingConversationKey) continue;
+    return { replyCode, pending };
+  }
+  return null;
+}
+
+function createPendingReply(state, conversation, customerText, fingerprint) {
+  const conversationKey = conversation || '__current__';
+  const existing = findPendingReplyByFingerprint(state, fingerprint, conversationKey);
+  if (existing) {
+    return {
+      replyCode: existing.replyCode,
+      pending: existing.pending,
+      reused: true
+    };
+  }
+
+  const replyCode = generateReplyCode();
+  state.pendingReplies[replyCode] = {
+    at: Date.now(),
+    conversation,
+    customerText,
+    fingerprint,
+    status: 'pending'
+  };
+
+  return {
+    replyCode,
+    pending: state.pendingReplies[replyCode],
+    reused: false
   };
 }
 
@@ -338,6 +420,39 @@ function rememberCurrentDesc(runtimeState, conversationName, desc) {
   runtimeState.currentDesc[key] = desc || '';
 }
 
+function hasRecentSellerEcho(runtimeState, conversationName, desc, windowMs = 10 * 60 * 1000) {
+  const key = conversationName || '__current__';
+  const currentDesc = (desc || '').trim();
+  if (!currentDesc) return false;
+
+  const completed = runtimeState.completed && runtimeState.completed[key];
+  if (!completed || !completed.at) return false;
+  if ((Date.now() - completed.at) > windowMs) return false;
+
+  const seen = runtimeState.seen || {};
+  const candidateActions = new Set([
+    'replied-ack',
+    'replied-simple',
+    'replied-closing',
+    'replied-clarification',
+    'replied-product-context-request',
+    'replied-main-agent-product-analysis',
+    'replied-hold',
+    'fallback-escalated',
+    'context-only-fallback-escalated',
+    'ai-missing-url-escalated'
+  ]);
+
+  for (const value of Object.values(seen)) {
+    if (!value || !value.at || !candidateActions.has(value.action)) continue;
+    if ((Date.now() - value.at) > windowMs) continue;
+    const reply = (value.reply || '').trim();
+    if (reply && reply === currentDesc) return true;
+  }
+
+  return false;
+}
+
 function processOnce(runtimeState) {
   const ensured = ensureReadableConversationState();
   const tab = ensured.tab;
@@ -464,6 +579,16 @@ function processOnce(runtimeState) {
     scroll: state.scroll || null
   });
 
+  if (!latest && hasRecentSellerEcho(runtimeState, parsed.conversationName, state.activeConversation && state.activeConversation.desc)) {
+    result.action = 'seller-echo-desc-skip';
+    log('message.seller-echo-desc-skip', {
+      conversation: parsed.conversationName,
+      activeDesc: state.activeConversation && state.activeConversation.desc,
+      activeTime: state.activeConversation && state.activeConversation.time
+    });
+    return result;
+  }
+
   if (latest) {
     const fingerprint = buildMessageFingerprint(parsed.conversationName, latest);
     const seen = runtimeState.seen[fingerprint];
@@ -507,6 +632,23 @@ function processOnce(runtimeState) {
       return result;
     }
 
+    const pendingByFingerprint = findPendingReplyByFingerprint(runtimeState, fingerprint, conversationKey);
+    if (pendingByFingerprint) {
+      result.action = result.action === 'switch-unread' ? 'switch-unread-pending-deduped' : 'pending-deduped';
+      result.pendingReply = {
+        replyCode: pendingByFingerprint.replyCode,
+        at: pendingByFingerprint.pending.at,
+        status: pendingByFingerprint.pending.status
+      };
+      log('message.pending-deduped', {
+        conversation: parsed.conversationName,
+        fingerprint,
+        replyCode: pendingByFingerprint.replyCode,
+        pendingAt: pendingByFingerprint.pending.at
+      });
+      return result;
+    }
+
     if (ackCanonical) {
       const recentAck = Object.entries(runtimeState.seen).find(([key, value]) => {
         return key.includes(`| ack | ${ackCanonical}`)
@@ -538,7 +680,7 @@ function processOnce(runtimeState) {
       const tsMs = latest.ts ? new Date(latest.ts.replace(' ', 'T') + '+08:00').getTime() : Date.now();
       const ageMs = Date.now() - tsMs;
       if (ageMs < CONTEXT_ONLY_FALLBACK_MS) {
-        rememberAction(runtimeState, fingerprint, 'context-only-waiting', { ageMs, text: latest.text });
+        markCompleted(runtimeState, conversationKey, fingerprint, 'context-only-waiting', { ageMs, text: latest.text });
         delete runtimeState.inflight[conversationKey];
         result.action = 'context-only-waiting';
         log('message.context-only-waiting', {
@@ -563,8 +705,7 @@ function processOnce(runtimeState) {
         reason: '商品卡已等待60秒仍无后续问题，转人工处理'
       };
       const notifyResult = sendFeishuText(formatEscalationNotice(notice));
-      rememberAction(runtimeState, fingerprint, 'context-only-fallback-escalated', { reply, notice });
-      runtimeState.completed[conversationKey] = { fingerprint, at: Date.now(), action: 'context-only-fallback-escalated' };
+      markCompleted(runtimeState, conversationKey, fingerprint, 'context-only-fallback-escalated', { reply, notice });
       delete runtimeState.inflight[conversationKey];
       result.action = 'context-only-fallback-escalated';
       result.reply = reply;
@@ -589,18 +730,13 @@ function processOnce(runtimeState) {
         conversation: parsed.conversationName,
         customerText: latest.text
       });
-      const replyCode = generateReplyCode();
+      const pendingEntry = createPendingReply(runtimeState, parsed.conversationName, latest.text, fingerprint);
+      const replyCode = pendingEntry.replyCode;
       const notice = buildEscalationNotice(latest, state, parsed.conversationName, replyCode);
-      runtimeState.pendingReplies[replyCode] = {
-        at: Date.now(),
-        conversation: parsed.conversationName,
-        customerText: latest.text,
-        fingerprint,
-        status: 'pending'
-      };
       const notifyResult = sendFeishuText(formatEscalationNotice(notice));
+      markCompleted(runtimeState, conversationKey, fingerprint, 'replied-hold', { notice, reply, replyCode });
+      delete runtimeState.inflight[conversationKey];
       saveRuntimeState(runtimeState);
-      rememberAction(runtimeState, fingerprint, 'replied-hold', { notice, reply, replyCode });
       result.action = 'replied-hold';
       result.reply = reply;
       result.replyResult = sendReplyResult;
@@ -625,7 +761,7 @@ function processOnce(runtimeState) {
         conversation: parsed.conversationName,
         customerText: latest.text
       });
-      rememberAction(runtimeState, fingerprint, 'replied-clarification', { reply });
+      markCompleted(runtimeState, conversationKey, fingerprint, 'replied-clarification', { reply });
       result.action = 'replied-clarification';
       result.reply = reply;
       result.replyResult = sendReplyResult;
@@ -647,7 +783,7 @@ function processOnce(runtimeState) {
         conversation: parsed.conversationName,
         customerText: latest.text
       });
-      rememberAction(runtimeState, fingerprint, 'replied-product-context-request', { reply });
+      markCompleted(runtimeState, conversationKey, fingerprint, 'replied-product-context-request', { reply });
       result.action = 'replied-product-context-request';
       result.reply = reply;
       result.replyResult = sendReplyResult;
@@ -695,7 +831,8 @@ function processOnce(runtimeState) {
           conversation: parsed.conversationName,
           customerText: latest.text
         });
-        const replyCode = generateReplyCode();
+        const pendingEntry = createPendingReply(runtimeState, parsed.conversationName, latest.text, fingerprint);
+        const replyCode = pendingEntry.replyCode;
         const notice = {
           type: 'escalation',
           replyCode,
@@ -703,18 +840,10 @@ function processOnce(runtimeState) {
           customerText: latest.text,
           reason: latest.hasProductContext ? '商品分析缺少有效商品链接，转人工处理' : '客户在追问商品信息，但当前未识别到可用商品上下文，转人工处理'
         };
-        runtimeState.pendingReplies[replyCode] = {
-          at: Date.now(),
-          conversation: parsed.conversationName,
-          customerText: latest.text,
-          fingerprint,
-          status: 'pending'
-        };
         const notifyResult = sendFeishuText(formatEscalationNotice(notice));
-        saveRuntimeState(runtimeState);
-        rememberAction(runtimeState, fingerprint, 'ai-missing-url-escalated', { aiTodo, notice, reply, replyCode });
-        runtimeState.completed[conversationKey] = { fingerprint, at: Date.now(), action: 'ai-missing-url-escalated' };
+        markCompleted(runtimeState, conversationKey, fingerprint, 'ai-missing-url-escalated', { aiTodo, notice, reply, replyCode });
         delete runtimeState.inflight[conversationKey];
+        saveRuntimeState(runtimeState);
         result.action = 'ai-missing-url-escalated';
         result.aiTodo = aiTodo;
         result.reply = reply;
@@ -754,14 +883,13 @@ function processOnce(runtimeState) {
           analysis: aiRequest.analysis
         });
 
-        rememberAction(runtimeState, fingerprint, 'replied-main-agent-product-analysis', {
+        markCompleted(runtimeState, conversationKey, fingerprint, 'replied-main-agent-product-analysis', {
           aiTodo,
           aiRequest,
           reply: finalReply,
           imFocusResult,
           cleanupResult
         });
-        runtimeState.completed[conversationKey] = { fingerprint, at: Date.now(), action: 'replied-main-agent-product-analysis' };
         delete runtimeState.inflight[conversationKey];
         result.action = 'replied-main-agent-product-analysis';
         result.reply = finalReply;
@@ -789,12 +917,11 @@ function processOnce(runtimeState) {
         reason: '主 agent 商品分析未返回可用 answer，需人工检查'
       };
       const notifyResult = sendFeishuText(formatEscalationNotice(notice));
-      rememberAction(runtimeState, fingerprint, 'main-agent-product-analysis-failed', {
+      markCompleted(runtimeState, conversationKey, fingerprint, 'main-agent-product-analysis-failed', {
         aiTodo,
         aiRequest,
         notice
       });
-      runtimeState.completed[conversationKey] = { fingerprint, at: Date.now(), action: 'main-agent-product-analysis-failed' };
       delete runtimeState.inflight[conversationKey];
       result.action = 'main-agent-product-analysis-failed';
       result.notice = notice;
@@ -817,8 +944,7 @@ function processOnce(runtimeState) {
         conversation: parsed.conversationName,
         customerText: latest.text
       });
-      rememberAction(runtimeState, fingerprint, 'replied-closing', { reply });
-      runtimeState.completed[conversationKey] = { fingerprint, at: Date.now(), action: 'replied-closing' };
+      markCompleted(runtimeState, conversationKey, fingerprint, 'replied-closing', { reply });
       delete runtimeState.inflight[conversationKey];
       result.action = 'replied-closing';
       result.reply = reply;
@@ -841,7 +967,7 @@ function processOnce(runtimeState) {
         customerText: latest.text
       });
       rememberAction(runtimeState, `${parsed.conversationName || ''} | ack | ${ackCanonical} | ${fingerprint}`, 'replied-ack', { reply, ackCanonical });
-      runtimeState.completed[conversationKey] = { fingerprint, at: Date.now(), action: 'replied-ack' };
+      markCompleted(runtimeState, conversationKey, fingerprint, 'replied-ack');
       delete runtimeState.inflight[conversationKey];
       result.action = 'replied-ack';
       result.reply = reply;
@@ -863,8 +989,7 @@ function processOnce(runtimeState) {
         conversation: parsed.conversationName,
         customerText: latest.text
       });
-      rememberAction(runtimeState, fingerprint, 'replied-simple', { reply: simple });
-      runtimeState.completed[conversationKey] = { fingerprint, at: Date.now(), action: 'replied-simple' };
+      markCompleted(runtimeState, conversationKey, fingerprint, 'replied-simple', { reply: simple });
       delete runtimeState.inflight[conversationKey];
       result.action = 'replied-simple';
       result.reply = simple;
@@ -885,14 +1010,8 @@ function processOnce(runtimeState) {
       conversation: parsed.conversationName,
       customerText: latest.text
     });
-    const replyCode = generateReplyCode();
-    runtimeState.pendingReplies[replyCode] = {
-      at: Date.now(),
-      conversation: parsed.conversationName,
-      customerText: latest.text,
-      fingerprint,
-      status: 'pending'
-    };
+    const pendingEntry = createPendingReply(runtimeState, parsed.conversationName, latest.text, fingerprint);
+    const replyCode = pendingEntry.replyCode;
     const notice = {
       type: 'escalation',
       replyCode,
@@ -901,10 +1020,9 @@ function processOnce(runtimeState) {
       reason: '未命中自动回复规则，转人工处理'
     };
     const notifyResult = sendFeishuText(formatEscalationNotice(notice));
-    saveRuntimeState(runtimeState);
-    rememberAction(runtimeState, fingerprint, 'fallback-escalated', { reply, notice, replyCode });
-    runtimeState.completed[conversationKey] = { fingerprint, at: Date.now(), action: 'fallback-escalated' };
+    markCompleted(runtimeState, conversationKey, fingerprint, 'fallback-escalated', { reply, notice, replyCode });
     delete runtimeState.inflight[conversationKey];
+    saveRuntimeState(runtimeState);
     result.action = 'fallback-escalated';
     result.reply = reply;
     result.replyResult = sendReplyResult;
