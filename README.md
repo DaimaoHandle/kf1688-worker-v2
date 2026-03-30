@@ -63,6 +63,7 @@ npm start
 说明：
 - `npm run once`：执行一轮检查，适合人工盯场调试
 - `npm start`：持续轮询运行
+- `npm start` 启动前会自动执行日志轮转：把当前 `runtime/worker.log` 归档为按日期命名的日志，并清理 3 天前旧日志
 
 ## 环境变量
 
@@ -73,6 +74,7 @@ npm start
 - `KF1688_ERROR_BACKOFF_MS`：异常退避毫秒，默认 `15000`
 - `KF1688_DEDUPE_WINDOW_MS`：去重窗口，默认 4 小时
 - `KF1688_WORKER_STATE`：运行态文件路径，默认 `runtime-state.json`
+- `KF1688_LOG_RETAIN_DAYS`：日志保留天数，默认 `3`
 
 ## 当前代码结构
 
