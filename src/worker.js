@@ -16,8 +16,10 @@ const {
   extractEffectiveMessages,
   latestOutstandingCustomerMessage,
   findOutstandingCustomerMessage,
-  buildMessageFingerprint
+  buildMessageFingerprint,
+  collectRecentCustomerTexts
 } = require('./message-parser');
+const { matchFaq } = require('./knowledge-base');
 
 const SHORT_ACK_DEDUPE_MS = Number(process.env.KF1688_SHORT_ACK_DEDUPE_MS || 2 * 60 * 1000);
 const { sendFeishuText, formatEscalationNotice } = require('./notify');
@@ -178,6 +180,7 @@ function loadRuntimeState() {
     if (!state.inflight) state.inflight = {};
     if (!state.completed) state.completed = {};
     if (!state.pendingReplies) state.pendingReplies = {};
+    if (!state.faqContext) state.faqContext = {};
     if (backfillDedupeFromPendingReplies(state)) {
       saveRuntimeState(state);
     }
@@ -188,6 +191,7 @@ function loadRuntimeState() {
       inflight: {},
       completed: {},
       pendingReplies: {},
+      faqContext: {},
       lastLoopAt: null,
       lastErrorAt: null,
       lastError: null,
@@ -440,7 +444,9 @@ function hasRecentSellerEcho(runtimeState, conversationName, desc, windowMs = 10
     'replied-hold',
     'fallback-escalated',
     'context-only-fallback-escalated',
-    'ai-missing-url-escalated'
+    'ai-missing-url-escalated',
+    'replied-faq',
+    'replied-faq-followup'
   ]);
 
   for (const value of Object.values(seen)) {
@@ -451,6 +457,45 @@ function hasRecentSellerEcho(runtimeState, conversationName, desc, windowMs = 10
   }
 
   return false;
+}
+
+function ensureFaqContextStore(runtimeState) {
+  if (!runtimeState.faqContext) runtimeState.faqContext = {};
+  return runtimeState.faqContext;
+}
+
+function getFaqContext(runtimeState, conversationKey) {
+  const store = ensureFaqContextStore(runtimeState);
+  return store[conversationKey || '__current__'] || null;
+}
+
+function setFaqContext(runtimeState, conversationKey, data) {
+  const store = ensureFaqContextStore(runtimeState);
+  store[conversationKey || '__current__'] = {
+    ...(data || {}),
+    at: Date.now()
+  };
+}
+
+function clearFaqContext(runtimeState, conversationKey) {
+  const store = ensureFaqContextStore(runtimeState);
+  delete store[conversationKey || '__current__'];
+}
+
+function replyForFaqFollowup(faqContext, customerText) {
+  const text = (customerText || '').trim();
+  if (!faqContext) return '';
+
+  if (faqContext.intent === 'address_change_query' && faqContext.awaiting === 'shipping_status') {
+    if (/没发货|未发货|还没发|尚未发货|没有发货/.test(text)) {
+      return '亲，如果订单还没有发货的话，麻烦您申请退款后重新拍下正确地址哦。';
+    }
+    if (/已发货|已经发货|发货了|已发出|发出了|已经寄出|寄出了/.test(text)) {
+      return '亲，如果订单已经发货了，改地址可能会产生额外运费，如果产生的话，需要您补运费的呢。';
+    }
+  }
+
+  return '';
 }
 
 function processOnce(runtimeState) {
@@ -580,13 +625,18 @@ function processOnce(runtimeState) {
   });
 
   if (!latest && hasRecentSellerEcho(runtimeState, parsed.conversationName, state.activeConversation && state.activeConversation.desc)) {
-    result.action = 'seller-echo-desc-skip';
-    log('message.seller-echo-desc-skip', {
-      conversation: parsed.conversationName,
-      activeDesc: state.activeConversation && state.activeConversation.desc,
-      activeTime: state.activeConversation && state.activeConversation.time
-    });
-    return result;
+    const recentCustomerTexts = collectRecentCustomerTexts(parsed.effective, 3);
+    const activeDesc = (state.activeConversation && state.activeConversation.desc) || '';
+    const hasNewCustomerLikeDesc = recentCustomerTexts.some(text => text && text !== activeDesc);
+    if (!hasNewCustomerLikeDesc) {
+      result.action = 'seller-echo-desc-skip';
+      log('message.seller-echo-desc-skip', {
+        conversation: parsed.conversationName,
+        activeDesc: state.activeConversation && state.activeConversation.desc,
+        activeTime: state.activeConversation && state.activeConversation.time
+      });
+      return result;
+    }
   }
 
   if (latest) {
@@ -675,6 +725,41 @@ function processOnce(runtimeState) {
       at: Date.now(),
       text: latest.text
     };
+
+    const faqContext = getFaqContext(runtimeState, conversationKey);
+    if (faqContext) {
+      const followupReply = replyForFaqFollowup(faqContext, latest.text);
+      if (followupReply) {
+        const sendReplyResult = sendTextWithRecovery(followupReply);
+        assertSendResult(sendReplyResult, 'send-faq-followup-reply', {
+          conversation: parsed.conversationName,
+          customerText: latest.text,
+          faqIntent: faqContext.intent,
+          awaiting: faqContext.awaiting
+        });
+        markCompleted(runtimeState, conversationKey, fingerprint, 'replied-faq-followup', {
+          reply: followupReply,
+          faqIntent: faqContext.intent,
+          awaiting: faqContext.awaiting
+        });
+        clearFaqContext(runtimeState, conversationKey);
+        delete runtimeState.inflight[conversationKey];
+        result.action = 'replied-faq-followup';
+        result.reply = followupReply;
+        result.replyResult = sendReplyResult;
+        result.faqContext = faqContext;
+        log('message.faq-followup-replied', {
+          conversation: parsed.conversationName,
+          fingerprint,
+          customerText: latest.text,
+          faqIntent: faqContext.intent,
+          awaiting: faqContext.awaiting,
+          reply: followupReply,
+          sendReplyOk: true
+        });
+        return result;
+      }
+    }
 
     if (isContextOnlyMessage(latest)) {
       const tsMs = latest.ts ? new Date(latest.ts.replace(' ', 'T') + '+08:00').getTime() : Date.now();
@@ -937,6 +1022,103 @@ function processOnce(runtimeState) {
       return result;
     }
 
+    const faqMatch = matchFaq(latest.text, {
+      recentCustomerTexts: collectRecentCustomerTexts(parsed.effective, 6)
+    });
+    if (faqMatch) {
+      if (faqMatch.handoff) {
+        const reply = holdingReply();
+        const sendReplyResult = sendTextWithRecovery(reply);
+        assertSendResult(sendReplyResult, 'send-faq-handoff-holding-reply', {
+          conversation: parsed.conversationName,
+          customerText: latest.text,
+          faqIntent: faqMatch.intent
+        });
+        const pendingEntry = createPendingReply(runtimeState, parsed.conversationName, latest.text, fingerprint);
+        const replyCode = pendingEntry.replyCode;
+        const notice = {
+          type: 'escalation',
+          replyCode,
+          conversation: parsed.conversationName,
+          customerText: latest.text,
+          reason: `FAQ命中高风险/人工意图：${faqMatch.intent}`
+        };
+        const notifyResult = sendFeishuText(formatEscalationNotice(notice));
+        markCompleted(runtimeState, conversationKey, fingerprint, 'faq-handoff-escalated', {
+          reply,
+          notice,
+          replyCode,
+          faqIntent: faqMatch.intent,
+          matchedTriggers: faqMatch.matchedTriggers
+        });
+        delete runtimeState.inflight[conversationKey];
+        saveRuntimeState(runtimeState);
+        result.action = 'faq-handoff-escalated';
+        result.reply = reply;
+        result.replyResult = sendReplyResult;
+        result.notice = notice;
+        result.notifyResult = notifyResult;
+        result.faqMatch = {
+          intent: faqMatch.intent,
+          matchedTriggers: faqMatch.matchedTriggers
+        };
+        log('message.faq-handoff-escalated', {
+          conversation: parsed.conversationName,
+          fingerprint,
+          customerText: latest.text,
+          faqIntent: faqMatch.intent,
+          matchedTriggers: faqMatch.matchedTriggers,
+          sendReplyOk: true,
+          notifyOk: true
+        });
+        return result;
+      }
+
+      if (faqMatch.reply || faqMatch.composedReply) {
+        const reply = (faqMatch.composedReply || faqMatch.reply || '').trim();
+        const sendReplyResult = sendTextWithRecovery(reply);
+        assertSendResult(sendReplyResult, 'send-faq-reply', {
+          conversation: parsed.conversationName,
+          customerText: latest.text,
+          faqIntent: faqMatch.intent
+        });
+        markCompleted(runtimeState, conversationKey, fingerprint, 'replied-faq', {
+          reply,
+          faqIntent: faqMatch.intent,
+          matchedTriggers: faqMatch.matchedTriggers,
+          followup: faqMatch.followup || []
+        });
+        if (faqMatch.intent === 'address_change_query' && Array.isArray(faqMatch.followup) && faqMatch.followup.includes('订单是否发货')) {
+          setFaqContext(runtimeState, conversationKey, {
+            intent: faqMatch.intent,
+            awaiting: 'shipping_status'
+          });
+        } else {
+          clearFaqContext(runtimeState, conversationKey);
+        }
+        delete runtimeState.inflight[conversationKey];
+        result.action = 'replied-faq';
+        result.reply = reply;
+        result.replyResult = sendReplyResult;
+        result.faqMatch = {
+          intent: faqMatch.intent,
+          matchedTriggers: faqMatch.matchedTriggers,
+          followup: faqMatch.followup || []
+        };
+        log('message.faq-replied', {
+          conversation: parsed.conversationName,
+          fingerprint,
+          customerText: latest.text,
+          faqIntent: faqMatch.intent,
+          matchedTriggers: faqMatch.matchedTriggers,
+          followup: faqMatch.followup || [],
+          reply,
+          sendReplyOk: true
+        });
+        return result;
+      }
+    }
+
     if (isClosingLikeMessage(latest.text)) {
       const reply = closingReply();
       const sendReplyResult = sendTextWithRecovery(reply);
@@ -1003,7 +1185,6 @@ function processOnce(runtimeState) {
       });
       return result;
     }
-
     const reply = holdingReply();
     const sendReplyResult = sendTextWithRecovery(reply);
     assertSendResult(sendReplyResult, 'send-fallback-holding-reply', {

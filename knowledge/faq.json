@@ -1,0 +1,430 @@
+[
+  {
+    "intent": "invoice_special_reject",
+    "enabled": true,
+    "priority": 130,
+    "triggers": [
+      "开专票",
+      "专票",
+      "增值税专用发票",
+      "专用发票"
+    ],
+    "reply": "抱歉亲，这边只支持开1%普票，暂时不支持开专票的。",
+    "followup": [],
+    "extraRules": [],
+    "handoff": false,
+    "handoffWhen": "不转人工",
+    "notes": "客户直接问专票时，优先命中并直接婉拒"
+  },
+  {
+    "intent": "logo_reject",
+    "enabled": true,
+    "priority": 128,
+    "triggers": [
+      "加logo",
+      "加LOGO",
+      "印logo",
+      "印LOGO",
+      "打logo",
+      "打LOGO",
+      "做logo",
+      "做LOGO"
+    ],
+    "reply": "抱歉亲，这边暂时不支持加LOGO的。",
+    "followup": [],
+    "extraRules": [],
+    "handoff": false,
+    "handoffWhen": "不转人工",
+    "notes": "客户直接问 LOGO 定制时，优先命中并直接婉拒"
+  },
+  {
+    "intent": "label_reject",
+    "enabled": true,
+    "priority": 126,
+    "triggers": [
+      "贴标",
+      "换标",
+      "贴牌",
+      "换吊牌",
+      "打吊牌",
+      "贴自己的标",
+      "贴我的标"
+    ],
+    "reply": "抱歉亲，这边暂时不支持贴标/贴牌的。",
+    "followup": [],
+    "extraRules": [],
+    "handoff": false,
+    "handoffWhen": "不转人工",
+    "notes": "客户直接问贴标贴牌时，优先命中并直接婉拒"
+  },
+  {
+    "intent": "pickup_reject",
+    "enabled": true,
+    "priority": 124,
+    "triggers": [
+      "自提",
+      "上门提货",
+      "自己提",
+      "到仓库提",
+      "去你们那边拿",
+      "可不可以自提"
+    ],
+    "reply": "抱歉亲，这边暂时不支持自提的。",
+    "followup": [],
+    "extraRules": [],
+    "handoff": false,
+    "handoffWhen": "不转人工",
+    "notes": "客户直接问自提时，优先命中并直接婉拒"
+  },
+  {
+    "intent": "stock_query",
+    "enabled": true,
+    "priority": 100,
+    "triggers": [
+      "有现货吗",
+      "有没有现货",
+      "现货吗",
+      "有货吗",
+      "有没有货",
+      "这款还有吗",
+      "这个有货吗",
+      "这款有吗",
+      "这个有吗",
+      "有库存吗"
+    ],
+    "reply": "亲，一般能拍的都有现货，如果没货客服会主动联系您退款的。",
+    "followup": [],
+    "extraRules": [],
+    "handoff": false,
+    "handoffWhen": "不转人工",
+    "notes": "库存/现货咨询，按用户口径直接标准回复，无需追问"
+  },
+  {
+    "intent": "price_query",
+    "enabled": true,
+    "priority": 98,
+    "triggers": [
+      "多少钱",
+      "什么价",
+      "怎么卖",
+      "批发价多少",
+      "价格多少",
+      "怎么拿货",
+      "拿货价多少",
+      "多少钱一个",
+      "报价",
+      "什么价格"
+    ],
+    "reply": "亲，少量的话就是页面价格的，采购的话需要提供下采购数量和规格等信息哦。",
+    "followup": [
+      "规格",
+      "数量",
+      "是否开票"
+    ],
+    "extraRules": [
+      "如果客户要求开专票、定制、贴标、加LOGO、自提等，是不支持的，需要婉拒客户。"
+    ],
+    "handoff": false,
+    "handoffWhen": "客户提供完整采购信息后，可转人工继续报价",
+    "notes": "价格/报价咨询，先给标准口径，再收集规格/数量/开票信息"
+  },
+  {
+    "intent": "delivery_query",
+    "enabled": true,
+    "priority": 96,
+    "triggers": [
+      "多久发货",
+      "什么时候发货",
+      "今天能发吗",
+      "今天可以发吗",
+      "几天发",
+      "发货时效",
+      "多长时间发货",
+      "多久能发",
+      "什么时候能发",
+      "下单多久发"
+    ],
+    "reply": "一般48小时内发货，如果遇到缺货，客服会主动联系您退款亲。",
+    "followup": [],
+    "extraRules": [],
+    "handoff": false,
+    "handoffWhen": "不转人工",
+    "notes": "发货时效咨询，按用户口径标准回复"
+  },
+  {
+    "intent": "address_change_query",
+    "enabled": true,
+    "priority": 95,
+    "triggers": [
+      "改地址",
+      "改一下地址",
+      "改下地址",
+      "我想改地址",
+      "地址想改一下",
+      "修改地址",
+      "修改一下地址",
+      "修改下地址",
+      "地址填错了",
+      "地址错了",
+      "改收货地址",
+      "改一下收货地址",
+      "改下收货地址",
+      "修改收货地址",
+      "修改一下收货地址",
+      "收货地址改一下",
+      "改备注",
+      "改一下备注",
+      "改下备注",
+      "备注改一下",
+      "修改备注",
+      "修改一下备注",
+      "修改下备注",
+      "备注错了"
+    ],
+    "reply": "亲，订单没有发货的话，改地址需要退款重拍哦；如果已经发货，改地址可能产生额外运费，如果产生，需要您补运费的呢。",
+    "followup": [
+      "订单是否发货"
+    ],
+    "extraRules": [],
+    "handoff": false,
+    "handoffWhen": "订单已发货，且需要改地址时可转人工",
+    "notes": "改地址/改备注咨询，先判断是否发货"
+  },
+  {
+    "intent": "customize_query",
+    "enabled": true,
+    "priority": 94,
+    "triggers": [
+      "能定制吗",
+      "可以定制吗",
+      "能做这个吗",
+      "这款能做吗",
+      "可以做吗",
+      "能不能做",
+      "能贴牌吗",
+      "能改尺寸吗",
+      "能改颜色吗",
+      "支持定制吗"
+    ],
+    "reply": "抱歉亲，暂时不支持定制的。",
+    "followup": [],
+    "extraRules": [],
+    "handoff": false,
+    "handoffWhen": "不转人工",
+    "notes": "定制/加工能力咨询，按用户口径直接婉拒"
+  },
+  {
+    "intent": "similar_query",
+    "enabled": true,
+    "priority": 92,
+    "triggers": [
+      "有没有类似款",
+      "有相似款吗",
+      "类似款",
+      "相似款",
+      "同款",
+      "找款",
+      "找这个",
+      "找这款",
+      "有没有同款",
+      "有类似的吗"
+    ],
+    "reply": "抱歉亲，目前店内暂时没有这款的。",
+    "followup": [],
+    "extraRules": [],
+    "handoff": false,
+    "handoffWhen": "不转人工",
+    "notes": "找款/相似款咨询，按用户口径直接婉拒"
+  },
+  {
+    "intent": "moq_query",
+    "enabled": true,
+    "priority": 90,
+    "triggers": [
+      "起订量多少",
+      "多少起批",
+      "最少多少",
+      "最小起订量",
+      "几件起批",
+      "多少个起订",
+      "多少起做",
+      "起批量",
+      "最低多少件",
+      "最低起订"
+    ],
+    "reply": "一件可发的亲，如果需要采购，请提供下采购信息哦。",
+    "followup": [
+      "如果客户意图是采购，则按采购报价意图处理"
+    ],
+    "extraRules": [
+      "客户如果明确是采购意图，后续按 price_query 的规则继续收集并处理。"
+    ],
+    "handoff": false,
+    "handoffWhen": "同报价意图，客户提供完整采购信息后可转人工",
+    "notes": "起订量/MOQ 咨询，零售一件可发，采购走报价链路"
+  },
+  {
+    "intent": "sample_query",
+    "enabled": true,
+    "priority": 88,
+    "triggers": [
+      "可以拿样吗",
+      "能寄样吗",
+      "有样品吗",
+      "先拿样",
+      "可以先寄样品吗",
+      "样品怎么拿",
+      "样品多少钱",
+      "可不可以拿样",
+      "支持拿样吗",
+      "拿样流程"
+    ],
+    "reply": "亲，直接页面下单即可，支持七天无理由退货。",
+    "followup": [],
+    "extraRules": [],
+    "handoff": false,
+    "handoffWhen": "不转人工",
+    "notes": "拿样/样品咨询，直接引导页面下单"
+  },
+  {
+    "intent": "shipping_fee_query",
+    "enabled": true,
+    "priority": 86,
+    "triggers": [
+      "包邮吗",
+      "运费多少",
+      "怎么发货",
+      "发什么快递",
+      "物流怎么走",
+      "到哪里发",
+      "寄到广东多少钱",
+      "发某地多少钱",
+      "邮费多少",
+      "能发什么物流"
+    ],
+    "reply": "运费根据重量不同，一般在5-20元之间，如果您下单运费过高，可以联系客服更改哦。",
+    "followup": [],
+    "extraRules": [],
+    "handoff": false,
+    "handoffWhen": "客户表示运费异常、客户二次要求修改运费时可转人工",
+    "notes": "运费/物流方式咨询，先给区间口径，异常运费再人工处理"
+  },
+  {
+    "intent": "invoice_query",
+    "enabled": true,
+    "priority": 84,
+    "triggers": [
+      "能开发票吗",
+      "可以开发票吗",
+      "发票怎么开",
+      "有发票吗",
+      "开普票吗",
+      "发票几个点",
+      "含税吗",
+      "能不能开票",
+      "票怎么弄"
+    ],
+    "reply": "这边只支持开1%普票哦，暂时不支持开专票的，页面价格是含税的。",
+    "followup": [
+      "如果客户要求开发票，需要追问开票信息"
+    ],
+    "extraRules": [
+      "不支持开专票。"
+    ],
+    "handoff": false,
+    "handoffWhen": "客户要求开发票且提供了开票信息后可转人工",
+    "notes": "发票/税点咨询，先说明票种和税率，开票资料齐全后再人工"
+  },
+  {
+    "intent": "proofing_query",
+    "enabled": true,
+    "priority": 82,
+    "triggers": [
+      "可以打样吗",
+      "能打样吗",
+      "打样多久",
+      "打样费用",
+      "先打样",
+      "先做样",
+      "可以先出样吗",
+      "样板怎么做",
+      "样品周期",
+      "支持打样吗"
+    ],
+    "reply": "亲，直接页面下单即可，支持七天无理由退货，我们店铺不支持定做样品。",
+    "followup": [],
+    "extraRules": [
+      "店铺不支持定做样品。"
+    ],
+    "handoff": false,
+    "handoffWhen": "不转人工",
+    "notes": "打样/出样咨询，按拿样逻辑回复，并明确不支持定做样品"
+  },
+  {
+    "intent": "urge_shipping_query",
+    "enabled": true,
+    "priority": 81,
+    "triggers": [
+      "催发",
+      "尽快发货",
+      "快点发货",
+      "急单",
+      "能不能快点发",
+      "什么时候能尽快发",
+      "帮我催一下",
+      "能加急吗"
+    ],
+    "reply": "亲，这边帮您催促一下仓库尽快发出。",
+    "followup": [],
+    "extraRules": [],
+    "handoff": false,
+    "handoffWhen": "不转人工",
+    "notes": "催发/急单咨询，先给安抚式标准回复"
+  },
+  {
+    "intent": "manual_request",
+    "enabled": true,
+    "priority": 200,
+    "triggers": [
+      "转人工",
+      "人工",
+      "真人",
+      "人工客服",
+      "有人吗人工",
+      "老板在吗",
+      "客服在吗",
+      "找人工",
+      "真人回复",
+      "不要机器人"
+    ],
+    "reply": "",
+    "followup": [],
+    "extraRules": [],
+    "handoff": true,
+    "handoffWhen": "用户明确要求人工",
+    "notes": "明确要求人工，应该直接转人工"
+  },
+  {
+    "intent": "after_sales_risk",
+    "enabled": true,
+    "priority": 190,
+    "triggers": [
+      "退款",
+      "退货",
+      "赔偿",
+      "投诉",
+      "差评",
+      "维权",
+      "质量有问题",
+      "发错货",
+      "少发",
+      "破损"
+    ],
+    "reply": "",
+    "followup": [],
+    "extraRules": [],
+    "handoff": true,
+    "handoffWhen": "售后/风险/投诉类问题建议直接人工",
+    "notes": "售后/风险/投诉类问题，建议直接人工"
+  }
+]

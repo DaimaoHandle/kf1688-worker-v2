@@ -51,9 +51,9 @@ const META_PATTERNS = [
 ];
 
 const ESCALATION_PATTERNS = [
-  /有没有现货/, /有现货吗/, /现货吗/, /有没有这款/, /这款有吗/, /这个有吗/, /这款还有吗/, /这个还有吗/,
-  /有没有类似/, /有没有相似/, /有类似款吗/, /有相似款吗/, /类似款/, /相似款/, /同款/, /找款/, /找这个/, /找这款/,
-  /这个品有活吗/, /这个货/, /这个品/, /这个链接/, /这链接/, /这款能做吗/, /这款能不能做/, /能做这个吗/, /有这个货吗/
+  /转人工/, /人工客服/, /找人工/, /真人/, /真人回复/, /不要机器人/,
+  /退款/, /退货/, /赔偿/, /投诉/, /差评/, /维权/,
+  /质量有问题/, /发错货/, /少发/, /破损/
 ];
 
 const PRODUCT_CARD_PATTERNS = [
@@ -417,6 +417,14 @@ function buildMessageFingerprint(conversation, latest) {
   return normalize(`${conversation || ''} | ${shortText}`);
 }
 
+function collectRecentCustomerTexts(effectiveMessages, limit = 6) {
+  return (effectiveMessages || [])
+    .filter(msg => msg && msg.isCustomer && !msg.isSystem && !msg.isMeta)
+    .slice(-limit)
+    .map(msg => normalize(msg.text || msg.originalText || ''))
+    .filter(Boolean);
+}
+
 module.exports = {
   SELLER_NAME,
   normalize,
@@ -432,5 +440,6 @@ module.exports = {
   extractEffectiveMessages,
   latestOutstandingCustomerMessage,
   findOutstandingCustomerMessage,
-  buildMessageFingerprint
+  buildMessageFingerprint,
+  collectRecentCustomerTexts
 };

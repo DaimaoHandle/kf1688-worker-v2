@@ -1,187 +1,339 @@
 # kf1688-worker-v2
 
-基于 OpenClaw existing-session browser control 的 1688 客服 worker v2。
+基于 OpenClaw existing-session / browser 控制链路的 1688 客服 worker。
 
-这是一次对旧方案的重写：核心目标是不再依赖旧 relay 方式，而是直接接管 `user` 浏览器 profile 中已经登录的 1688 旺旺页面，在真实 existing-session 上完成消息识别、自动回复和人工介入提醒。
+它的目标不是伪造登录，也不是自己维护独立浏览器，而是：
+- 复用已经登录好的 1688 旺旺页面
+- 识别未读会话
+- 读取最近客户消息
+- 命中规则时自动回复
+- 遇到高风险/复杂问题时转人工
+- 通过回复码把人工回复再转发回 1688 会话
 
-## 当前进度（截至 2026-03-26）
+这个版本已经去掉了项目内硬编码的服务器地址、通知对象、店铺名等部署相关信息，适合迁移到其他服务器。
 
-当前版本已经完成并实测通过以下链路：
+## 最近更新（2026-03-31）
 
-1. 能识别并接管 `user` profile 下的 1688 IM 页签
-2. 能读取会话列表、识别未读、切换到目标会话
-3. 能在切换后重新抓取当前聊天面板正文
-4. 能从聊天面板尾部文本中提取最近一条有效客户消息
-5. 能对简单招呼类消息自动回复，例如：
-   - `你好`
-   - `在吗`
-6. 能识别人工介入类关键词，并先回复占位话术：
-   - `有没有现货`
-   - `有没有这款`
-   - `有没有类似款`
-   - `这个品有活吗`
-   - `这个货`
-   - `类似款`
-7. 命中人工介入规则后，能通过 Gateway `/tools/invoke` + `message` 工具给指定飞书用户发送提醒
-8. 能处理“商品卡 + 追问”类场景，例如：
-   - `我在看这个商品 ...`
-   - `这个克重多少老板`
-   - `这个多大尺寸`
-9. 已修复两类关键稳定性问题：
-   - **通用买家账号解析**：不再只依赖 `工厂店/百货` 之类名字，像 `tb904521630` 这种买家账号也能正确识别
-   - **卖家/买家角色反转导致的重复回复**：已修复“把自己发出的回复当成客户新消息再次处理”的问题，避免重复打开商品详情页和重复发送相同回复
+昨天这版主要完成了 3 类更新：
 
-## 已实测通过的闭环
+1. 去重增强
+   - 修复重复回复、重复转人工
+   - 增加 inflight / completed / pendingReplies 多层去重
+   - 补了 ack 类短消息的去重窗口
 
-### 场景 1：简单招呼自动回复
-客户发送：`你好`
+2. FAQ/规则库接入
+   - 新增 `knowledge/faq.json`
+   - 新增 `src/knowledge-base.js`
+   - 支持常见问题规则匹配、标准回复、部分 follow-up
+   - 售后/投诉/明确要人工类问题直接转人工
 
-程序行为：
-- 识别当前会话中的最新客户消息
-- 自动回复：`在的亲，有什么可以帮您的`
+3. 日志轮转
+   - 新增 `src/log-rotate.js`
+   - `npm start` 前自动轮转日志
+   - 默认保留近 3 天日志
 
-### 场景 2：人工介入规则
-客户发送：`有没有现货`
+对应提交：
+- `aeeb767 fix: dedupe repeated replies and escalations`
+- `c51e3b6 chore: rotate worker logs daily and retain 3 days`
 
-程序行为：
-- 自动回复：`在的亲，这边帮您查一下哦。`
-- 同时给飞书目标用户发送提醒，例如：
-  - 会话名
-  - 客户消息
-  - 命中原因
+## 当前能力
 
-该链路已经实际验证：1688 回复成功，飞书提醒成功送达。
+### 已支持
 
-## 运行方式
+- 接管已登录的 1688 IM 页签
+- 识别未读会话并切换
+- 解析会话尾部消息
+- 基于规则自动回复简单问法
+- 对 FAQ 命中问题直接回复
+- 对人工/售后/投诉类问题转人工
+- 生成 `RXXXX` 回复码
+- 支持手动按回复码把人工回复发回 1688
+- 支持商品卡/商品链接相关上下文处理
+- 支持调用主 agent 做商品分析
 
-```bash
-npm run check
-npm run once
-npm start
+### 当前仍依赖
+
+- 必须已有可用的 1688 登录态
+- 页面 DOM 结构不能发生过大变化
+- OpenClaw 当前环境必须具备可用 browser / agent 能力
+
+## 目录结构
+
+```text
+kf1688-worker-v2/
+├── knowledge/
+│   └── faq.json
+├── runtime/
+├── src/
+│   ├── browser-adapter.js
+│   ├── knowledge-base.js
+│   ├── log-rotate.js
+│   ├── message-parser.js
+│   ├── notify.js
+│   ├── product-ai.js
+│   └── worker.js
+├── package.json
+└── README.md
 ```
-
-说明：
-- `npm run once`：执行一轮检查，适合人工盯场调试
-- `npm start`：持续轮询运行
-- `npm start` 启动前会自动执行日志轮转：把当前 `runtime/worker.log` 归档为按日期命名的日志，并清理 3 天前旧日志
 
 ## 环境变量
 
-- `KF1688_BROWSER_PROFILE`：浏览器 profile，默认 `user`
-- `KF1688_NOTIFY_TARGET`：飞书通知目标，默认 `user:ou_530307aabbf541dddaf607f17ad08c6c`
-- `KF1688_GATEWAY_URL`：Gateway tools invoke 地址，默认 `http://127.0.0.1:18789/tools/invoke`
-- `KF1688_POLL_MS`：轮询间隔，默认 `8000`
-- `KF1688_ERROR_BACKOFF_MS`：异常退避毫秒，默认 `15000`
-- `KF1688_DEDUPE_WINDOW_MS`：去重窗口，默认 4 小时
-- `KF1688_WORKER_STATE`：运行态文件路径，默认 `runtime-state.json`
-- `KF1688_LOG_RETAIN_DAYS`：日志保留天数，默认 `3`
+下面这些都建议在部署时显式配置，不要依赖默认值。
 
-## 当前代码结构
+### 基础配置
 
-- `src/browser-adapter.js`
-  - 负责通过 `openclaw browser --browser-profile user` 接管现有页签
-  - 负责读 iframe、切会话、发送消息
+- `KF1688_BROWSER_PROFILE`
+  - 已登录 1688 的浏览器 profile 名
+  - 默认：`user`
 
-- `src/message-parser.js`
-  - 负责从正文尾部文本里提取有效消息
-  - 负责识别系统消息 / 元信息 / 人工介入关键词
-  - 负责生成去重 fingerprint
+- `KF1688_SELLER_NAME`
+  - 当前店铺/卖家显示名
+  - 用于区分买家/卖家消息
+  - 例：`某某百货`
 
-- `src/worker.js`
-  - 主流程调度
-  - 会话切换后重抓正文
-  - 简单自动回复
-  - 人工介入占位回复
-  - 去重、轮询、错误退避
+- `KF1688_NOTIFY_TARGET`
+  - 飞书通知目标
+  - 例：`user:ou_xxx`
 
-- `src/notify.js`
-  - 通过 Gateway `/tools/invoke` 调用 `message` 工具
-  - 给指定飞书用户发送人工介入提醒
+- `KF1688_GATEWAY_URL`
+  - Gateway tools invoke 地址
+  - 例：`http://127.0.0.1:18789/tools/invoke`
 
-## 人工接管 / 飞书转发（已打通底层链路）
+### 轮询与状态
 
-当前版本已经支持**人工接管回复码**的底层转发能力：
+- `KF1688_POLL_MS`
+  - 轮询间隔，默认 `8000`
 
-1. 当命中人工介入时，通知消息会带一个处理码，例如：
-   - `【待处理】R7821`
-   - `会话：我的名字叫呸呸呸`
-   - `客户消息：你好，这个品我要500个，什么价格可以做呢`
-   - `回复格式：回复 R7821：你的内容`
+- `KF1688_ERROR_BACKOFF_MS`
+  - 异常退避毫秒，默认 `15000`
 
-2. worker 会把 `R7821 -> 1688 会话` 记录到 `runtime-state.json` 里的 `pendingReplies`
+- `KF1688_DEDUPE_WINDOW_MS`
+  - 去重窗口，默认 `14400000`（4 小时）
 
-3. 项目已提供手动转发入口：
+- `KF1688_SHORT_ACK_DEDUPE_MS`
+  - 简短确认类消息去重窗口，默认 `120000`
+
+- `KF1688_CONTEXT_ONLY_FALLBACK_MS`
+  - 商品上下文消息等待补充问题的超时，默认 `60000`
+
+- `KF1688_WORKER_STATE`
+  - 运行态文件路径
+
+- `KF1688_LOG_RETAIN_DAYS`
+  - 日志保留天数，默认 `3`
+
+### Browser 恢复相关
+
+- `KF1688_BROWSER_RETRY`
+  - browser 恢复重试次数
+
+- `KF1688_BROWSER_RETRY_WAIT_MS`
+  - browser 恢复重试间隔
+
+## 安装
 
 ```bash
-node src/worker.js --send-code R7821 --text "500个的话这边可以做，您发下具体款式和要求，我给您核报价。"
+npm install
+npm run check
 ```
 
-4. 实测已通过：
-   - 可按处理码定位到对应 1688 会话
-   - 可真实发送指定文本到客户
+## 推荐启动方式
 
-### 当前状态
+不要把路径写死进 npm script。更推荐在部署机上通过环境变量启动。
 
-- **底层链路已打通**：处理码 -> 会话映射 -> 转发发送
-- **上层交互还在补**：后续可继续把 Feishu 会话中的 `回复 Rxxxx：...` 自动解析并调用上述命令，实现完全顺手的人肉接管
+### 单次检查
 
-## 当前已知限制
+```bash
+KF1688_BROWSER_PROFILE=user \
+KF1688_SELLER_NAME='你的店铺名' \
+KF1688_NOTIFY_TARGET='user:ou_xxx' \
+KF1688_GATEWAY_URL='http://127.0.0.1:18789/tools/invoke' \
+KF1688_WORKER_STATE='./runtime-state.json' \
+node src/worker.js --once
+```
 
-1. 必须先有可用的 1688 IM 页签，worker 不负责自动登录
-2. existing-session 偶发会因为浏览器 target 失效而短时不可用，必要时需要重新聚焦有效页签
-3. 当前消息提取仍然主要依赖 DOM 结构和聊天面板文本尾部，页面结构变化仍可能影响解析稳定性
-4. 当前仍可能被 **报价助理 / 商机提醒 / 去报价** 一类非普通客户会话干扰，后续需要在会话层做更明确的过滤
-5. 当前通知目标是固定飞书目标，后续可以做成可配置化更强的版本
-6. 当前只放行了少量实测规则，还没有扩大到更复杂的客服问答场景
-7. 商品问题链路已经能跑通，但 AI 分析依赖页面真实可读信息；若详情信息只在长图深处或页面结构异常，仍可能影响回答质量
-8. Feishu 里的 `回复 Rxxxx：...` 目前还没有完全自动接进 worker；当前已经有底层发送入口，剩余主要是上层命令解析与调用编排
+### 持续运行
 
-## 明天继续建议补的内容
+```bash
+mkdir -p runtime
+node src/log-rotate.js
 
-### 高优先级
-1. 会话过滤
-   - 忽略 `报价助理小慧`、`去报价`、商机提醒等非普通客户会话
-   - 避免 worker 被系统提醒类会话吸走焦点
+KF1688_BROWSER_PROFILE=user \
+KF1688_SELLER_NAME='你的店铺名' \
+KF1688_NOTIFY_TARGET='user:ou_xxx' \
+KF1688_GATEWAY_URL='http://127.0.0.1:18789/tools/invoke' \
+KF1688_WORKER_STATE='./runtime-state.json' \
+node src/worker.js >> ./runtime/worker.log 2>&1
+```
 
-2. 增强日志
-   - 每轮处理哪个会话
-   - 抽取到的最新消息
-   - 是否回复成功
-   - 是否提醒成功
-   - 是否命中过滤规则
+## package.json 脚本说明
 
-3. 加强异常恢复
-   - target 失效后的自动恢复
-   - iframe 未加载时的重试
-   - 发送控件缺失时的诊断输出
-   - 长时间无 `lastLoopAt` 更新时的告警/自恢复
+仓库里当前 `package.json` 仍保留了本机绝对路径版脚本，便于现有机器直接跑；
+但如果你要迁移到新服务器，建议改成相对路径或直接按上面的命令启动。
 
-### 中优先级
-4. 更稳的商品问题链路
-5. 更准确的当前会话识别
-6. 更清晰的运行日志/调试输出
+## 手动人工回复
 
-### 测试待补
-1. 连续多轮未读消息处理
-2. 切换不同客户会话的稳定性
-3. 1688 页面长时间挂起后的恢复能力
-4. 飞书提醒在长时间运行中的稳定性
-5. 去重逻辑是否会误杀相似消息
+当 worker 发出人工提醒后，会给出一个回复码，例如：
 
-## 结论
+```text
+【待处理】R7821
+会话：某客户
+客户消息：你好，这款能开专票吗
+原因：FAQ命中高风险/人工意图：manual_request
+回复格式：回复 R7821：你的内容
+```
 
-当前版本已经不再是纯骨架，而是进入了**可人工盯场试运行**阶段。
+可以手工执行：
 
-它已经能够在真实 1688 existing-session 上完成：
-- 接管
-- 识别
-- 自动回复
-- 人工介入提醒
+```bash
+node src/worker.js --send-code R7821 --text "这里填写要回复给客户的话术"
+```
 
-但还需要继续补：
-- 稳定性
-- 日志
-- 恢复能力
-- 更多业务规则
+## FAQ 规则库说明
 
-明天从这些点继续推进即可。
+FAQ 放在：
+
+```text
+knowledge/faq.json
+```
+
+每条规则支持：
+- `intent`
+- `enabled`
+- `priority`
+- `triggers`
+- `reply`
+- `followup`
+- `handoff`
+- `notes`
+
+目前已覆盖：
+- 专票
+- LOGO / 贴牌
+- 自提
+- 现货
+- 价格/报价
+- 发货时效
+- 改地址
+- 定制
+- 相似款
+- 起订量
+- 样品/打样
+- 运费/物流
+- 发票
+- 催发
+- 明确要求人工
+- 售后/投诉/退款/差评风险
+
+## 调试建议
+
+### 1. 先做语法检查
+
+```bash
+npm run check
+```
+
+### 2. 先跑单轮
+
+```bash
+node src/worker.js --once
+```
+
+### 3. 看状态文件
+
+```bash
+cat runtime-state.json
+```
+
+重点关注：
+- `lastLoopAt`
+- `lastErrorAt`
+- `lastError`
+- `lastResult`
+- `pendingReplies`
+
+### 4. 看日志
+
+```bash
+tail -f runtime/worker.log
+```
+
+### 5. 如果 browser 能力异常
+
+仓库日志里出现过这类错误：
+
+```text
+error: unknown command 'browser'
+```
+
+这说明目标机器上的 OpenClaw 版本或能力集不对，不是 worker 本身逻辑错误。
+需要先确认该机器：
+- OpenClaw 安装正常
+- 支持 `openclaw browser ...`
+- 有可复用的已登录 profile
+
+## 部署到新服务器前必须改的东西
+
+至少确认这些变量不是写死状态：
+
+- 店铺名：`KF1688_SELLER_NAME`
+- 飞书通知对象：`KF1688_NOTIFY_TARGET`
+- Gateway 地址：`KF1688_GATEWAY_URL`
+- 状态文件路径：`KF1688_WORKER_STATE`
+- 浏览器 profile：`KF1688_BROWSER_PROFILE`
+
+如果要做多店铺/多机器部署，建议每个实例独立：
+- 一个浏览器 profile
+- 一个 runtime-state.json
+- 一个 runtime/ 日志目录
+- 一组独立环境变量
+
+## 给 OpenClaw 的部署提示词
+
+下面这段可以直接丢给另一台服务器上的 OpenClaw，让它快速接手部署和调试：
+
+```text
+请帮我部署并调试 kf1688-worker-v2，要求如下：
+
+1. 先检查当前机器是否满足运行条件：
+   - Node.js / npm 可用
+   - OpenClaw 可用
+   - `openclaw browser` 能正常使用
+   - 机器上已有一个浏览器 profile，并且该 profile 已登录 1688 旺旺
+
+2. 从仓库拉取项目后，不要把任何业务变量写死在代码里。以下信息必须通过环境变量或独立配置注入：
+   - 店铺名称（KF1688_SELLER_NAME）
+   - 飞书通知对象（KF1688_NOTIFY_TARGET）
+   - Gateway 地址（KF1688_GATEWAY_URL）
+   - 浏览器 profile（KF1688_BROWSER_PROFILE）
+   - 状态文件路径（KF1688_WORKER_STATE）
+
+3. 先执行：
+   - npm install
+   - npm run check
+   - 使用 `node src/worker.js --once` 做一次单轮调试
+
+4. 如果调试失败，请优先定位以下问题：
+   - OpenClaw 版本不支持 `openclaw browser`
+   - 浏览器 profile 未登录 1688
+   - 当前没有可复用的 1688 IM 页签
+   - DOM 结构变化导致消息解析失败
+   - Gateway token / notify 发送链路异常
+
+5. 如果单轮检查通过，再启动长期运行版本，并输出：
+   - 启动命令
+   - 日志路径
+   - runtime-state.json 路径
+   - 当前使用的环境变量清单（值可脱敏）
+
+6. 调试过程中，优先保持代码通用性，不要把服务器地址、店铺名、飞书用户、路径等信息直接写死到源码中；如必须调整，优先改成环境变量默认值或 README 示例。
+```
+
+## 后续建议
+
+下一步比较值得继续做的是：
+- 把 README 里的绝对路径脚本彻底改成相对路径/配置驱动
+- 增加 `.env.example`
+- 把通知、店铺规则、FAQ 进一步拆成配置文件
+- 增加 systemd / pm2 部署示例
+- 补一套最小回归测试样本
